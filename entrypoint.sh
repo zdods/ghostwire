@@ -29,6 +29,8 @@ mkdir -p "$DOWNLOADS_DIR" "$INCOMPLETE_DIR" "$WATCH_DIR" "$TRANSMISSION_HOME"
 
 # ── Bring up WireGuard ────────────────────────────────────────────────────────
 
+chmod 600 "$WG_CONF"
+
 echo "Starting WireGuard tunnel ($WG_CONF)..."
 wg-quick up "$WG_CONF" || die "wg-quick failed"
 

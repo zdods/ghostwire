@@ -9,12 +9,16 @@ ENV DATA_DIR=/data
 RUN apk add --no-cache \
     transmission-daemon \
     wireguard-tools \
+    wireguard-go \
     iptables \
     ip6tables \
     iproute2 \
     curl \
     bash \
     su-exec
+
+# Use userspace WireGuard when the host kernel lacks the wireguard module (most NAS systems)
+ENV WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
