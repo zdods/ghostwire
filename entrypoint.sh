@@ -14,73 +14,131 @@ TRANSMISSION_HOME="$DATA_DIR/transmission"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-# ── iptables backend ─────────────────────────────────────────────────────────
-# Synology (and other NAS) kernels don't support nf_tables. Detect this and
-# fall back to the legacy iptables backend that Alpine also ships.
+# ── Verify iptables works ─────────────────────────────────────────────────
+# Build forces the legacy backend so this should work on any kernel.
 
-if ! iptables -L &>/dev/null 2>&1; then
-    echo "nf_tables not available — switching to legacy iptables backend..."
-    for f in iptables iptables-restore iptables-save ip6tables ip6tables-restore ip6tables-save; do
-        legacy=$(command -v "${f}-legacy" 2>/dev/null) || continue
-        target=$(command -v "$f" 2>/dev/null || echo "/usr/sbin/$f")
-        ln -sf "$legacy" "$target"
-    done
-fi
+iptables -L &>/dev/null || die "iptables is not functional in this environment. \
+Check that the container has NET_ADMIN capability (privileged mode)."
 
-# ── Ensure /dev/net/tun exists ────────────────────────────────────────────────
+# ── Ensure /dev/net/tun exists ────────────────────────────────────────────
 
 if [[ ! -c /dev/net/tun ]]; then
     echo "TUN device not found — creating /dev/net/tun..."
     mkdir -p /dev/net
-    mknod /dev/net/tun c 10 200 || die "/dev/net/tun does not exist and could not be created. Enable privileged mode on the container."
+    mknod /dev/net/tun c 10 200 || die "/dev/net/tun could not be created. Enable privileged mode."
     chmod 600 /dev/net/tun
 fi
 
-# ── Locate WireGuard config ───────────────────────────────────────────────────
+# ── Locate WireGuard config ───────────────────────────────────────────────
 
 [[ -d "$CONFIG_DIR" ]] || die "Config directory not found: $CONFIG_DIR"
 WG_CONF=$(find "$CONFIG_DIR" -maxdepth 1 -name '*.conf' | head -1)
-[[ -n "$WG_CONF" ]] || die "No .conf file found in $CONFIG_DIR — place your Mullvad WireGuard config there."
+[[ -n "$WG_CONF" ]] || die "No .conf file found in $CONFIG_DIR"
 
-ENDPOINT_HOST=$(grep -E '^\s*Endpoint\s*=' "$WG_CONF" | head -1 | sed 's/.*=\s*//' | cut -d':' -f1 | tr -d ' ')
-ENDPOINT_PORT=$(grep -E '^\s*Endpoint\s*=' "$WG_CONF" | head -1 | sed 's/.*=\s*//' | rev | cut -d':' -f1 | rev | tr -d ' ')
+# Pull endpoint host:port (used for kill-switch exception + manual route)
+ENDPOINT_LINE=$(grep -E '^\s*Endpoint\s*=' "$WG_CONF" | head -1 | sed 's/.*=\s*//' | tr -d ' ')
+ENDPOINT_HOST="${ENDPOINT_LINE%:*}"
+ENDPOINT_PORT="${ENDPOINT_LINE##*:}"
+[[ -n "$ENDPOINT_HOST" && -n "$ENDPOINT_PORT" ]] || die "Could not parse Endpoint from $WG_CONF"
 
-# ── Ensure data subdirs exist ─────────────────────────────────────────────────
+# Resolve to IPv4 if it's a hostname
+if [[ "$ENDPOINT_HOST" =~ ^[0-9.]+$ ]]; then
+    ENDPOINT_IP="$ENDPOINT_HOST"
+else
+    ENDPOINT_IP=$(getent ahostsv4 "$ENDPOINT_HOST" | awk '/STREAM|RAW|DGRAM/ {print $1; exit}')
+    [[ -z "$ENDPOINT_IP" ]] && ENDPOINT_IP=$(getent ahostsv4 "$ENDPOINT_HOST" | awk '{print $1; exit}')
+    [[ -n "$ENDPOINT_IP" ]] || die "Could not resolve endpoint $ENDPOINT_HOST"
+fi
+
+# Capture original default gateway BEFORE we touch routing
+ORIG_GW=$(ip -4 route show default | awk '/default/ {print $3; exit}')
+ORIG_DEV=$(ip -4 route show default | awk '/default/ {print $5; exit}')
+[[ -n "$ORIG_GW" && -n "$ORIG_DEV" ]] || die "Could not determine default gateway / device"
+
+echo "Endpoint: $ENDPOINT_IP:$ENDPOINT_PORT  (via host gateway $ORIG_GW dev $ORIG_DEV)"
+
+# ── Ensure data subdirs exist ─────────────────────────────────────────────
 
 mkdir -p "$DOWNLOADS_DIR" "$INCOMPLETE_DIR" "$WATCH_DIR" "$TRANSMISSION_HOME"
 
-# ── Bring up WireGuard ────────────────────────────────────────────────────────
+# ── Preprocess WG config: strip IPv6 + force Table=off ────────────────────
+# Table=off tells wg-quick not to set up routing or call iptables-restore.
+# This avoids needing the addrtype/comment iptables extensions which aren't
+# available in all NAS kernels.
 
 chmod 600 "$WG_CONF"
-
-# Strip IPv6 addresses from the config — many NAS host kernels have IPv6 disabled,
-# causing wg-quick to abort on "ip -6 address add ... Permission denied".
 WG_CONF_CLEAN=/tmp/wg0.conf
-awk -F'=' '
+
+awk '
+BEGIN { in_interface = 0; table_done = 0 }
+
+/^\[Interface\][[:space:]]*$/ {
+    in_interface = 1
+    table_done = 0
+    print
+    next
+}
+
+/^\[/ {
+    if (in_interface && !table_done) { print "Table = off"; table_done = 1 }
+    in_interface = 0
+    print
+    next
+}
+
+/^[[:space:]]*Table[[:space:]]*=/ {
+    if (in_interface) { print "Table = off"; table_done = 1; next }
+}
+
 /^[[:space:]]*(Address|AllowedIPs|DNS)[[:space:]]*=/ {
-    key = $1 "="
-    val = substr($0, index($0, "=") + 1)
-    n = split(val, parts, ",")
+    n = index($0, "=")
+    key = substr($0, 1, n - 1)
+    gsub(/[[:space:]]/, "", key)
+    val = substr($0, n + 1)
+    nv = split(val, parts, ",")
     out = ""
-    for (i = 1; i <= n; i++) {
+    for (i = 1; i <= nv; i++) {
         gsub(/^[[:space:]]+|[[:space:]]+$/, "", parts[i])
         if (parts[i] != "" && parts[i] !~ /:/) {
             out = (out == "") ? parts[i] : out ", " parts[i]
         }
     }
-    if (out != "") print key " " out
+    if (out != "") print key " = " out
     next
 }
+
 { print }
+
+END {
+    if (in_interface && !table_done) print "Table = off"
+}
 ' "$WG_CONF" > "$WG_CONF_CLEAN"
+
 chmod 600 "$WG_CONF_CLEAN"
 
-echo "Starting WireGuard tunnel ($WG_CONF)..."
+echo "── Sanitized config (keys redacted) ──"
+grep -v -E '(PrivateKey|PublicKey|PresharedKey)\s*=' "$WG_CONF_CLEAN" || true
+echo "──────────────────────────────────────"
+
+# ── Bring up WireGuard ────────────────────────────────────────────────────
+# With Table=off, wg-quick brings up the interface and assigns the address
+# but does NOT touch routing or iptables. We handle that ourselves.
+
+echo "Starting WireGuard tunnel..."
 wg-quick up "$WG_CONF_CLEAN" || die "wg-quick failed"
 
-# ── Kill switch ───────────────────────────────────────────────────────────────
-# Block all traffic not going through the tunnel.
-# Exceptions: loopback, established connections, and the WireGuard UDP handshake.
+# ── Manual routing ────────────────────────────────────────────────────────
+
+echo "Configuring routes..."
+# Endpoint must reach via the original gateway (otherwise the encrypted
+# packets would loop back through wg0).
+ip -4 route replace "$ENDPOINT_IP/32" via "$ORIG_GW" dev "$ORIG_DEV"
+# Everything else goes through the tunnel.
+ip -4 route replace default dev "$WG_IF"
+echo "  $ENDPOINT_IP/32 → $ORIG_GW dev $ORIG_DEV"
+echo "  default → dev $WG_IF"
+
+# ── Kill switch ───────────────────────────────────────────────────────────
 
 echo "Configuring kill switch..."
 
@@ -98,13 +156,11 @@ iptables -A OUTPUT -o "$WG_IF" -j ACCEPT
 iptables -A INPUT  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
-# Allow the WireGuard UDP handshake to the Mullvad endpoint
-if [[ -n "$ENDPOINT_HOST" && -n "$ENDPOINT_PORT" ]]; then
-    iptables -A OUTPUT -d "$ENDPOINT_HOST" -p udp --dport "$ENDPOINT_PORT" -j ACCEPT
-    iptables -A INPUT  -s "$ENDPOINT_HOST" -p udp --sport "$ENDPOINT_PORT" -j ACCEPT
-fi
+# Allow WireGuard handshake to/from endpoint over the host interface
+iptables -A OUTPUT -d "$ENDPOINT_IP" -p udp --dport "$ENDPOINT_PORT" -j ACCEPT
+iptables -A INPUT  -s "$ENDPOINT_IP" -p udp --sport "$ENDPOINT_PORT" -j ACCEPT
 
-# Allow Transmission web UI inbound (restrict to LAN via WEBUI_ALLOW env if desired)
+# Allow LAN to reach Transmission web UI
 WEBUI_ALLOW="${WEBUI_ALLOW:-}"
 if [[ -n "$WEBUI_ALLOW" ]]; then
     iptables -A INPUT  -s "$WEBUI_ALLOW" -p tcp --dport 9091 -j ACCEPT
@@ -114,7 +170,7 @@ else
     iptables -A OUTPUT -p tcp --sport 9091 -j ACCEPT
 fi
 
-# IPv6 — lock down entirely
+# Lock down IPv6 entirely
 ip6tables -F 2>/dev/null || true
 ip6tables -P INPUT   DROP 2>/dev/null || true
 ip6tables -P OUTPUT  DROP 2>/dev/null || true
@@ -125,18 +181,19 @@ ip6tables -A OUTPUT -o "$WG_IF" -j ACCEPT 2>/dev/null || true
 
 echo "Kill switch active."
 
-# ── Verify VPN connectivity ───────────────────────────────────────────────────
+# ── Verify VPN connectivity ───────────────────────────────────────────────
 
 echo "Verifying VPN connectivity..."
-for i in {1..10}; do
+PUBLIC_IP=""
+for i in $(seq 1 15); do
     PUBLIC_IP=$(curl -sf --max-time 5 https://am.i.mullvad.net/ip 2>/dev/null || true)
     [[ -n "$PUBLIC_IP" ]] && { echo "Connected — public IP: $PUBLIC_IP"; break; }
-    echo "  Waiting for tunnel... ($i/10)"
+    echo "  Waiting for tunnel... ($i/15)"
     sleep 2
 done
-[[ -n "${PUBLIC_IP:-}" ]] || echo "WARNING: Could not verify VPN — proceeding anyway."
+[[ -n "$PUBLIC_IP" ]] || echo "WARNING: Could not verify VPN — proceeding anyway."
 
-# ── Transmission user/group ───────────────────────────────────────────────────
+# ── Transmission user/group ───────────────────────────────────────────────
 
 if ! getent group transmission &>/dev/null; then
     addgroup -g "$PGID" transmission
@@ -147,7 +204,7 @@ fi
 
 chown -R transmission:transmission "$DOWNLOADS_DIR" "$INCOMPLETE_DIR" "$WATCH_DIR" "$TRANSMISSION_HOME"
 
-# ── Default Transmission settings (written once) ──────────────────────────────
+# ── Default Transmission settings (written once) ──────────────────────────
 
 SETTINGS="$TRANSMISSION_HOME/settings.json"
 if [[ ! -f "$SETTINGS" ]]; then
@@ -178,7 +235,7 @@ EOF
     chown transmission:transmission "$SETTINGS"
 fi
 
-# ── Start Transmission ────────────────────────────────────────────────────────
+# ── Start Transmission ────────────────────────────────────────────────────
 
 echo "Starting transmission-daemon..."
 exec su-exec transmission transmission-daemon \
