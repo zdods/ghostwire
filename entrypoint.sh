@@ -40,8 +40,30 @@ mkdir -p "$DOWNLOADS_DIR" "$INCOMPLETE_DIR" "$WATCH_DIR" "$TRANSMISSION_HOME"
 
 chmod 600 "$WG_CONF"
 
+# Strip IPv6 addresses from the config — many NAS host kernels have IPv6 disabled,
+# causing wg-quick to abort on "ip -6 address add ... Permission denied".
+WG_CONF_CLEAN=$(mktemp /tmp/wg-XXXXXX.conf)
+awk -F'=' '
+/^[[:space:]]*(Address|AllowedIPs|DNS)[[:space:]]*=/ {
+    key = $1 "="
+    val = substr($0, index($0, "=") + 1)
+    n = split(val, parts, ",")
+    out = ""
+    for (i = 1; i <= n; i++) {
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", parts[i])
+        if (parts[i] != "" && parts[i] !~ /:/) {
+            out = (out == "") ? parts[i] : out ", " parts[i]
+        }
+    }
+    if (out != "") print key " " out
+    next
+}
+{ print }
+' "$WG_CONF" > "$WG_CONF_CLEAN"
+chmod 600 "$WG_CONF_CLEAN"
+
 echo "Starting WireGuard tunnel ($WG_CONF)..."
-wg-quick up "$WG_CONF" || die "wg-quick failed"
+wg-quick up "$WG_CONF_CLEAN" || die "wg-quick failed"
 
 # ── Kill switch ───────────────────────────────────────────────────────────────
 # Block all traffic not going through the tunnel.
