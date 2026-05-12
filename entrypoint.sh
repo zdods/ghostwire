@@ -14,6 +14,17 @@ TRANSMISSION_HOME="$DATA_DIR/transmission"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+# ── iptables backend ─────────────────────────────────────────────────────────
+# Synology (and other NAS) kernels don't support nf_tables. Detect this and
+# fall back to the legacy iptables backend that Alpine also ships.
+
+if ! iptables -L &>/dev/null 2>&1; then
+    echo "nf_tables not available — switching to legacy iptables backend..."
+    for f in iptables iptables-restore iptables-save ip6tables ip6tables-restore ip6tables-save; do
+        ln -sf xtables-legacy-multi /sbin/$f 2>/dev/null || true
+    done
+fi
+
 # ── Ensure /dev/net/tun exists ────────────────────────────────────────────────
 
 if [[ ! -c /dev/net/tun ]]; then
