@@ -3,16 +3,43 @@ services:
     build: .
     container_name: ghostwire
     restart: unless-stopped
+
+    # WireGuard inside a container needs to create the wg0 interface, manage
+    # routes, and install iptables rules — that requires kernel-level network
+    # privileges. The simple path is `privileged: true`. The more conservative
+    # path (commented below) drops everything except NET_ADMIN + SYS_MODULE and
+    # bind-mounts /dev/net/tun. The conservative path works on most modern
+    # kernels but not on older Synology models.
     privileged: true
+    # cap_add:
+    #   - NET_ADMIN
+    #   - SYS_MODULE
+    # devices:
+    #   - /dev/net/tun:/dev/net/tun
+    # security_opt:
+    #   - no-new-privileges:true
+
     environment:
       - PUID=1000
       - PGID=1000
       - PEER_PORT=51413
-      # Optional: restrict web UI to a specific subnet, e.g. 192.168.1.0/24
+      # Restrict the Transmission web UI to a specific CIDR.
       # - WEBUI_ALLOW=192.168.1.0/24
+      # Re-check VPN connectivity every N seconds in the background;
+      # three consecutive failures cause the container to exit and restart.
+      # - VPN_HEALTHCHECK_INTERVAL=300
+
     volumes:
+      # Bind mount (simplest): point at any host directory.
       - /path/to/your/nas/volume:/data
+      # Named volume (alternative): uncomment the entry below and the
+      # top-level `volumes:` block at the bottom of this file.
+      # - ghostwire-data:/data
+
     ports:
       - "9091:9091"
       - "51413:51413/tcp"
       - "51413:51413/udp"
+
+# volumes:
+#   ghostwire-data:

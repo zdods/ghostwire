@@ -12,7 +12,35 @@ INCOMPLETE_DIR="$DATA_DIR/incomplete"
 WATCH_DIR="$DATA_DIR/watch"
 TRANSMISSION_HOME="$DATA_DIR/transmission"
 
+# Opt-in periodic VPN probe. When >0, a background watcher curls Mullvad every
+# N seconds; three consecutive failures terminate the container so the Docker
+# restart policy re-establishes the tunnel from scratch.
+VPN_HEALTHCHECK_INTERVAL="${VPN_HEALTHCHECK_INTERVAL:-0}"
+
+WG_CONF_CLEAN=/tmp/wg0.conf
+TRANSMISSION_PID=""
+HEALTH_PID=""
+
 die() { echo "ERROR: $*" >&2; exit 1; }
+
+cleanup() {
+    trap - TERM INT
+    echo "Shutting down..."
+    if [[ -n "$HEALTH_PID" ]] && kill -0 "$HEALTH_PID" 2>/dev/null; then
+        kill "$HEALTH_PID" 2>/dev/null || true
+        wait "$HEALTH_PID" 2>/dev/null || true
+    fi
+    if [[ -n "$TRANSMISSION_PID" ]] && kill -0 "$TRANSMISSION_PID" 2>/dev/null; then
+        kill -TERM "$TRANSMISSION_PID" 2>/dev/null || true
+        wait "$TRANSMISSION_PID" 2>/dev/null || true
+    fi
+    if [[ -f "$WG_CONF_CLEAN" ]] && ip link show "$WG_IF" &>/dev/null; then
+        wg-quick down "$WG_CONF_CLEAN" 2>/dev/null || true
+    fi
+    exit "${1:-0}"
+}
+
+trap 'cleanup 0' TERM INT
 
 # ── Verify iptables works ─────────────────────────────────────────────────
 # Build forces the legacy backend so this should work on any kernel.
@@ -67,7 +95,6 @@ mkdir -p "$DOWNLOADS_DIR" "$INCOMPLETE_DIR" "$WATCH_DIR" "$TRANSMISSION_HOME"
 # available in all NAS kernels.
 
 chmod 600 "$WG_CONF"
-WG_CONF_CLEAN=/tmp/wg0.conf
 
 awk '
 BEGIN { in_interface = 0; table_done = 0 }
@@ -235,10 +262,39 @@ EOF
     chown transmission:transmission "$SETTINGS"
 fi
 
+# ── Optional background VPN watcher ───────────────────────────────────────
+
+if [[ "$VPN_HEALTHCHECK_INTERVAL" =~ ^[0-9]+$ ]] && (( VPN_HEALTHCHECK_INTERVAL > 0 )); then
+    echo "VPN watcher enabled (interval ${VPN_HEALTHCHECK_INTERVAL}s, 3 strikes)."
+    (
+        failures=0
+        while sleep "$VPN_HEALTHCHECK_INTERVAL"; do
+            if curl -sf --max-time 10 https://am.i.mullvad.net/ip >/dev/null 2>&1; then
+                failures=0
+            else
+                failures=$((failures + 1))
+                echo "VPN watcher: probe failed ($failures/3)" >&2
+                if (( failures >= 3 )); then
+                    echo "VPN watcher: 3 consecutive failures, signalling shutdown." >&2
+                    kill -TERM 1
+                    exit 0
+                fi
+            fi
+        done
+    ) &
+    HEALTH_PID=$!
+fi
+
 # ── Start Transmission ────────────────────────────────────────────────────
 
 echo "Starting transmission-daemon..."
-exec su-exec transmission transmission-daemon \
+su-exec transmission transmission-daemon \
     --foreground \
     --config-dir "$TRANSMISSION_HOME" \
-    --log-level=info
+    --log-level=info &
+TRANSMISSION_PID=$!
+
+# Forward exit status; cleanup runs via trap on signal-driven exits.
+status=0
+wait "$TRANSMISSION_PID" || status=$?
+cleanup "$status"

@@ -1,0 +1,8 @@
+# hadolint configuration for ghostwire
+#
+# DL3018: apk add — pinning every Alpine package version is impractical and
+#         would block routine security updates. We pin the volatile package
+#         (wireguard-go from edge) explicitly; the rest float with the base
+#         image, which is itself pinned by digest in CI.
+ignored:
+  - DL3018

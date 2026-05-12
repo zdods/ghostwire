@@ -6,7 +6,7 @@ Transmission torrent client running inside a Mullvad WireGuard tunnel, packaged 
 
 - Docker with Compose
 - A [Mullvad](https://mullvad.net) subscription
-- **Privileged mode enabled** on the container — required to set up the WireGuard tunnel and iptables kill switch. This is a toggle in Synology Container Manager, Portainer, Unraid, and most other NAS Docker UIs.
+- **Privileged mode enabled** on the container — required to set up the WireGuard tunnel and iptables kill switch on older NAS kernels (Synology, etc.). On modern Linux kernels you can instead grant `NET_ADMIN` + `SYS_MODULE` and bind-mount `/dev/net/tun` (see commented block in `docker-compose.yml`).
 
 ## Directory layout
 
@@ -34,12 +34,21 @@ The container picks up the first `.conf` file it finds in that directory.
 
 ## Running
 
-The image is published to the GitHub Container Registry on every push to `main`.
+The image is published to the GitHub Container Registry on every push to `main`, with multi-architecture support (`linux/amd64` and `linux/arm64`).
+
+Available tags:
+
+| Tag | Meaning |
+|---|---|
+| `main` | Latest build from the `main` branch |
+| `stable` | Alias for the most recent `main` build |
+| `vX.Y.Z` / `vX.Y` | Released versions (when tagged) |
+| `sha-<short>` | A specific commit |
 
 Pull the latest image:
 
 ```bash
-docker pull ghcr.io/zdods/ghostwire:main
+docker pull ghcr.io/zdods/ghostwire:stable
 ```
 
 Create a `docker-compose.yml` on your NAS (or use the one in this repo as a base), set the image and volume path:
@@ -47,7 +56,7 @@ Create a `docker-compose.yml` on your NAS (or use the one in this repo as a base
 ```yaml
 services:
   ghostwire:
-    image: ghcr.io/zdods/ghostwire:main
+    image: ghcr.io/zdods/ghostwire:stable
     container_name: ghostwire
     restart: unless-stopped
     privileged: true
@@ -85,6 +94,7 @@ The Transmission web UI is available at `http://<host-ip>:9091`.
 | `PGID` | `1000` | GID to run Transmission as |
 | `PEER_PORT` | `51413` | BitTorrent peer port |
 | `WEBUI_ALLOW` | _(unset)_ | CIDR to restrict web UI access (e.g. `192.168.1.0/24`). Unset allows all inbound on port 9091. |
+| `VPN_HEALTHCHECK_INTERVAL` | `0` | When set to a positive integer, re-probes Mullvad every N seconds in the background. Three consecutive failures terminate the container so Docker's restart policy re-establishes the tunnel. `0` disables the watcher. |
 
 ## Verifying the VPN is active
 
@@ -108,6 +118,34 @@ docker exec ghostwire curl -s https://am.i.mullvad.net/json
 
 The response will show `"mullvad_exit_ip": true` if traffic is correctly routed through Mullvad.
 
+### Container healthcheck
+
+The image declares a Docker `HEALTHCHECK` that probes Mullvad every 60 seconds. If the tunnel drops, the container is reported as `unhealthy` — visible in `docker ps`, Portainer, Synology Container Manager, and most NAS dashboards.
+
+```bash
+docker inspect --format '{{.State.Health.Status}}' ghostwire
+```
+
+## Verifying the kill switch
+
+The kill switch should drop every packet that doesn't go through `wg0`. To prove it works, bring down the tunnel from inside the container and confirm Transmission loses connectivity:
+
+```bash
+# 1. Confirm baseline: traffic flows through Mullvad
+docker exec ghostwire curl -s --max-time 5 https://am.i.mullvad.net/ip
+
+# 2. Tear the tunnel down
+docker exec ghostwire wg-quick down /tmp/wg0.conf
+
+# 3. The same probe should now fail (timeout, not a leaked IP)
+docker exec ghostwire curl -s --max-time 5 https://am.i.mullvad.net/ip || echo "blocked ✓"
+
+# 4. Restart the container to restore the tunnel
+docker compose restart ghostwire
+```
+
+If step 3 returns a public IP, the kill switch is not active — do not torrent until you've fixed it.
+
 ## Customizing Transmission settings
 
 Transmission writes its settings to `<data>/transmission/settings.json` on first run. Edit that file and restart the container to apply changes. The file is not overwritten on subsequent starts.
@@ -118,3 +156,7 @@ Transmission writes its settings to `<data>/transmission/settings.json` on first
 |---|---|---|
 | `9091` | TCP | Transmission web UI |
 | `51413` | TCP + UDP | BitTorrent peer connections |
+
+## License
+
+[MIT](LICENSE)
