@@ -6,7 +6,7 @@ Transmission torrent client running inside a Mullvad WireGuard tunnel, packaged 
 
 - Docker with Compose
 - A [Mullvad](https://mullvad.net) subscription
-- `NET_ADMIN` capability available on the host (standard on most NAS systems)
+- **Privileged mode enabled** on the container — required to set up the WireGuard tunnel and iptables kill switch. This is a toggle in Synology Container Manager, Portainer, Unraid, and most other NAS Docker UIs.
 
 ## Directory layout
 
@@ -50,11 +50,7 @@ services:
     image: ghcr.io/zdods/ghostwire:main
     container_name: ghostwire
     restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
-      - net.ipv6.conf.all.disable_ipv6=1
+    privileged: true
     environment:
       - PUID=1000
       - PGID=1000

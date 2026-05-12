@@ -14,6 +14,15 @@ TRANSMISSION_HOME="$DATA_DIR/transmission"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+# ── Ensure /dev/net/tun exists ────────────────────────────────────────────────
+
+if [[ ! -c /dev/net/tun ]]; then
+    echo "TUN device not found — creating /dev/net/tun..."
+    mkdir -p /dev/net
+    mknod /dev/net/tun c 10 200 || die "/dev/net/tun does not exist and could not be created. Enable privileged mode on the container."
+    chmod 600 /dev/net/tun
+fi
+
 # ── Locate WireGuard config ───────────────────────────────────────────────────
 
 [[ -d "$CONFIG_DIR" ]] || die "Config directory not found: $CONFIG_DIR"

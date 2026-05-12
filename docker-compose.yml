@@ -3,13 +3,7 @@ services:
     build: .
     container_name: ghostwire
     restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
-      - net.ipv6.conf.all.disable_ipv6=1
+    privileged: true
     environment:
       - PUID=1000
       - PGID=1000
