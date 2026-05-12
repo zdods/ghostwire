@@ -92,7 +92,7 @@ mkdir -p "$DOWNLOADS_DIR" "$INCOMPLETE_DIR" "$WATCH_DIR" "$TRANSMISSION_HOME"
 # ── Preprocess WG config: strip IPv6 + force Table=off ────────────────────
 # Table=off tells wg-quick not to set up routing or call iptables-restore.
 # This avoids needing the addrtype/comment iptables extensions which aren't
-# available in all NAS kernels.
+# available in all older/embedded Linux kernels.
 
 chmod 600 "$WG_CONF"
 

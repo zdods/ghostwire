@@ -2,7 +2,7 @@
 
 [![Build and publish image](https://github.com/zdods/ghostwire/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/zdods/ghostwire/actions/workflows/docker.yml)
 
-Transmission torrent client running inside a Mullvad WireGuard tunnel, packaged as a Docker image. All traffic from Transmission is routed through the VPN. An iptables kill switch drops all non-tunnel traffic so nothing leaks if the VPN goes down.
+Transmission torrent client running inside a Mullvad WireGuard tunnel, packaged as a Docker image. Works on any Linux Docker host — workstations, servers, NAS units, Raspberry Pi, and beyond. All traffic from Transmission is routed through the VPN. An iptables kill switch drops all non-tunnel traffic so nothing leaks if the VPN goes down.
 
 ## Quickstart
 
@@ -28,9 +28,9 @@ See the [Running](#running) section for a `docker compose` equivalent and the fu
 
 - Docker Engine 20.10+ (with Compose v2 if you use `docker compose`)
 - A [Mullvad](https://mullvad.net) subscription
-- **Privileged mode** on the container — required to set up the WireGuard tunnel and iptables kill switch on older NAS kernels (Synology, etc.). On modern Linux kernels you can instead grant `NET_ADMIN` + `SYS_MODULE` and bind-mount `/dev/net/tun` (see commented block in `docker-compose.yml`).
+- **Privileged mode** on the container — required to set up the WireGuard tunnel and iptables kill switch on older Linux kernels (including off-the-shelf NAS units like Synology and QNAP). On modern Linux kernels you can instead grant `NET_ADMIN` + `SYS_MODULE` and bind-mount `/dev/net/tun` (see commented block in `docker-compose.yml`).
 
-The image uses [wireguard-go](https://git.zx2c4.com/wireguard-go/) (the userspace implementation) so it works on hosts whose kernel lacks the `wireguard` module — typical for off-the-shelf NAS units. On hosts that *do* have the kernel module, wg-quick will still prefer it; userspace is only the fallback.
+The image uses [wireguard-go](https://git.zx2c4.com/wireguard-go/) (the userspace implementation) so it works on hosts whose kernel lacks the `wireguard` module — common on older and embedded Linux kernels. On hosts that *do* have the kernel module, wg-quick will still prefer it; userspace is only the fallback.
 
 ## Getting a Mullvad WireGuard config
 
@@ -136,7 +136,7 @@ The response will show `"mullvad_exit_ip": true` if traffic is correctly routed 
 
 ### Container healthcheck
 
-The image declares a Docker `HEALTHCHECK` that probes Mullvad every 60 seconds. If the tunnel drops, the container is reported as `unhealthy` — visible in `docker ps`, Portainer, Synology Container Manager, and most NAS dashboards.
+The image declares a Docker `HEALTHCHECK` that probes Mullvad every 60 seconds. If the tunnel drops, the container is reported as `unhealthy` — visible in `docker ps`, Portainer, and most container management UIs.
 
 ```bash
 docker inspect --format '{{.State.Health.Status}}' ghostwire
@@ -159,7 +159,7 @@ docker exec ghostwire wg-quick down /tmp/wg0.conf
 docker exec ghostwire curl -sf --max-time 5 https://am.i.mullvad.net/ip && echo "LEAK" || echo "blocked ✓"
 
 # 4. Restart the container to restore the tunnel — `docker compose restart ghostwire`,
-#    `docker restart ghostwire`, or your NAS UI all work.
+#    `docker restart ghostwire`, or your container UI all work.
 ```
 
 If step 3 prints `LEAK` (or any IP address), the kill switch is not active — do not torrent until you've fixed it.

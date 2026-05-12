@@ -9,7 +9,7 @@ services:
     # privileges. The simple path is `privileged: true`. The more conservative
     # path (commented below) drops everything except NET_ADMIN + SYS_MODULE and
     # bind-mounts /dev/net/tun. The conservative path works on most modern
-    # kernels but not on older Synology models.
+    # kernels but not on all older or embedded Linux kernels.
     privileged: true
     # cap_add:
     #   - NET_ADMIN
@@ -31,7 +31,7 @@ services:
 
     volumes:
       # Bind mount (simplest): point at any host directory.
-      - /path/to/your/nas/volume:/data
+      - /path/to/your/data:/data
       # Named volume (alternative): uncomment the entry below and the
       # top-level `volumes:` block at the bottom of this file.
       # - ghostwire-data:/data

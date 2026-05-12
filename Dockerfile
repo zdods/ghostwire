@@ -28,9 +28,9 @@ RUN apk add --no-cache \
         --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
         "wireguard-go=${WIREGUARD_GO_VERSION}"
 
-# Force the legacy iptables backend. Synology and other older NAS kernels
-# don't support nf_tables. The legacy backend works on both old and modern
-# kernels, so we use it unconditionally.
+# Force the legacy iptables backend. Older and embedded Linux kernels (e.g.
+# Synology, QNAP) don't support nf_tables. The legacy backend works on both
+# old and modern kernels, so we use it unconditionally.
 RUN for prefix in iptables ip6tables; do \
         for suffix in "" "-restore" "-save"; do \
             tool="${prefix}${suffix}"; \
@@ -43,7 +43,7 @@ RUN for prefix in iptables ip6tables; do \
         done; \
     done && iptables --version
 
-# Use userspace WireGuard when the host kernel lacks the wireguard module (most NAS systems)
+# Use userspace WireGuard when the host kernel lacks the wireguard module (older and embedded Linux systems)
 ENV WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go
 
 COPY entrypoint.sh /entrypoint.sh
