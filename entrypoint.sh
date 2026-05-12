@@ -42,7 +42,7 @@ chmod 600 "$WG_CONF"
 
 # Strip IPv6 addresses from the config — many NAS host kernels have IPv6 disabled,
 # causing wg-quick to abort on "ip -6 address add ... Permission denied".
-WG_CONF_CLEAN=$(mktemp /tmp/wg-XXXXXX)
+WG_CONF_CLEAN=/tmp/wg0.conf
 awk -F'=' '
 /^[[:space:]]*(Address|AllowedIPs|DNS)[[:space:]]*=/ {
     key = $1 "="
