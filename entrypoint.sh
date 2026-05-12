@@ -21,7 +21,9 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 if ! iptables -L &>/dev/null 2>&1; then
     echo "nf_tables not available — switching to legacy iptables backend..."
     for f in iptables iptables-restore iptables-save ip6tables ip6tables-restore ip6tables-save; do
-        ln -sf xtables-legacy-multi /sbin/$f 2>/dev/null || true
+        legacy=$(command -v "${f}-legacy" 2>/dev/null) || continue
+        target=$(command -v "$f" 2>/dev/null || echo "/usr/sbin/$f")
+        ln -sf "$legacy" "$target"
     done
 fi
 

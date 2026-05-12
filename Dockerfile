@@ -10,6 +10,7 @@ RUN apk add --no-cache \
     transmission-daemon \
     wireguard-tools \
     iptables \
+    iptables-legacy \
     ip6tables \
     iproute2 \
     curl \
