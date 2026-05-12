@@ -1,0 +1,22 @@
+services:
+  ghostwire:
+    build: .
+    container_name: ghostwire
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+      - net.ipv6.conf.all.disable_ipv6=1
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - PEER_PORT=51413
+      # Optional: restrict web UI to a specific subnet, e.g. 192.168.1.0/24
+      # - WEBUI_ALLOW=192.168.1.0/24
+    volumes:
+      - /path/to/your/nas/volume:/data
+    ports:
+      - "9091:9091"
+      - "51413:51413/tcp"
+      - "51413:51413/udp"
