@@ -9,13 +9,13 @@ ENV DATA_DIR=/data
 RUN apk add --no-cache \
     transmission-daemon \
     wireguard-tools \
-    wireguard-go \
     iptables \
     ip6tables \
     iproute2 \
     curl \
     bash \
-    su-exec
+    su-exec \
+    && apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community wireguard-go
 
 # Use userspace WireGuard when the host kernel lacks the wireguard module (most NAS systems)
 ENV WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go
