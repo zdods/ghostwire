@@ -34,17 +34,49 @@ The container picks up the first `.conf` file it finds in that directory.
 
 ## Running
 
-Edit `docker-compose.yml` and set the volume path:
+The image is published to the GitHub Container Registry on every push to `main`.
 
-```yaml
-volumes:
-  - /your/host/path:/data
+Pull the latest image:
+
+```bash
+docker pull ghcr.io/zdods/ghostwire:main
 ```
 
-Then start the container:
+Create a `docker-compose.yml` on your NAS (or use the one in this repo as a base), set the image and volume path:
+
+```yaml
+services:
+  ghostwire:
+    image: ghcr.io/zdods/ghostwire:main
+    container_name: ghostwire
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+      - net.ipv6.conf.all.disable_ipv6=1
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - PEER_PORT=51413
+    volumes:
+      - /your/host/path:/data
+    ports:
+      - "9091:9091"
+      - "51413:51413/tcp"
+      - "51413:51413/udp"
+```
+
+Then start:
 
 ```bash
 docker compose up -d
+```
+
+To update to the latest image:
+
+```bash
+docker compose pull && docker compose up -d
 ```
 
 The Transmission web UI is available at `http://<host-ip>:9091`.
