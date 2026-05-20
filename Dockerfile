@@ -1,4 +1,4 @@
-FROM alpine:3.20
+FROM alpine:3.23
 
 LABEL org.opencontainers.image.title="ghostwire" \
       org.opencontainers.image.description="Transmission torrent client routed through Mullvad WireGuard VPN" \
